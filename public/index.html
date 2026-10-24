@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Voice Call Center</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 3rem auto; max-width: 42rem; padding: 0 1rem; }
+      button { font-size: 1rem; padding: .65rem 1rem; }
+      #status { min-height: 1.5rem; margin: 1rem 0; }
+      #transcript { background: #f4f4f4; border-radius: .5rem; min-height: 8rem; padding: 1rem; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>AI voice prototype</h1>
+    <p>Start a browser session and speak through your microphone.</p>
+    <label>
+      Agent
+      <select id="agent" disabled>
+        <option>Loading agents...</option>
+      </select>
+    </label>
+    <p>Each browser session gets its own independent realtime conversation.</p>
+    <button id="start">Start voice session</button>
+    <button id="stop" disabled>Stop</button>
+    <p id="status">Ready.</p>
+    <div id="transcript" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
