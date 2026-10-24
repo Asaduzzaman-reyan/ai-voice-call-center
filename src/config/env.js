@@ -10,9 +10,13 @@ function required(name) {
 
 export const env = {
   port: Number.parseInt(process.env.PORT ?? "3000", 10),
+  databaseUrl: required("DATABASE_URL"),
   openAiApiKey: required("OPENAI_API_KEY"),
   realtimeModel: required("OPENAI_REALTIME_MODEL"),
   realtimeVoice: required("OPENAI_REALTIME_VOICE"),
+  transcriptionModel:
+    process.env.OPENAI_TRANSCRIPTION_MODEL?.trim() ?? "gpt-4o-mini-transcribe",
+  cookieSecure: process.env.NODE_ENV === "production",
 };
 
 if (!Number.isInteger(env.port) || env.port < 1 || env.port > 65535) {

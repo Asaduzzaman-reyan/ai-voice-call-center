@@ -1,8 +1,17 @@
 import express from "express";
+import { deleteSession, getUserBySession, loginUser, registerUser } from "./auth/auth.service.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgent, getAllAgents } from "./agents/agent.service.js";
 import { env } from "./config/env.js";
+import {
+  appendMessage,
+  createConversation,
+  endCall,
+  getConversation,
+  getAgent,
+  listAgents,
+} from "./conversations/conversation.store.js";
+import { initializeDatabase, pool } from "./db/database.js";
 
 const app = express();
 const currentFile = fileURLToPath(import.meta.url);
@@ -15,13 +24,113 @@ app.get("/api/health", (_request, response) => {
   response.json({ ok: true });
 });
 
-app.get("/api/agents", (_request, response) => {
-  response.json({ agents: getAllAgents() });
+function sessionId(request) {
+  const match = request.get("cookie")?.match(/(?:^|;\s*)session=([^;]+)/);
+  return match?.[1];
+}
+
+async function requireAuth(request, response, next) {
+  try {
+    const user = await getUserBySession(sessionId(request));
+    if (!user) return response.status(401).json({ error: "Authentication required" });
+    request.user = user;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+function setSessionCookie(response, session) {
+  response.setHeader(
+    "Set-Cookie",
+    `session=${session}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${env.cookieSecure ? "; Secure" : ""}`,
+  );
+}
+
+app.post("/api/auth/register", async (request, response, next) => {
+  try {
+    const { companyName, email, password } = request.body ?? {};
+    if (
+      typeof companyName !== "string" || companyName.trim().length < 2 ||
+      typeof email !== "string" || !email.includes("@") ||
+      typeof password !== "string" || password.length < 12
+    ) {
+      return response.status(400).json({
+        error: "Company name, valid email, and a password of at least 12 characters are required",
+      });
+    }
+    const session = await registerUser({ companyName, email, password });
+    setSessionCookie(response, session.sessionId);
+    return response.status(201).json({ user: session.user });
+  } catch (error) {
+    return next(error);
+  }
 });
 
-app.post("/api/realtime/client-secret", async (request, response, next) => {
+app.post("/api/auth/login", async (request, response, next) => {
   try {
-    const agent = getAgent(request.body?.agentId ?? "customer-support");
+    const { email, password } = request.body ?? {};
+    if (typeof email !== "string" || typeof password !== "string") {
+      return response.status(400).json({ error: "Email and password are required" });
+    }
+    const session = await loginUser({ email, password });
+    setSessionCookie(response, session.sessionId);
+    return response.json({ user: session.user });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post("/api/auth/logout", async (request, response, next) => {
+  try {
+    await deleteSession(sessionId(request));
+    response.setHeader("Set-Cookie", "session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+    return response.status(204).end();
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get("/api/auth/me", requireAuth, (request, response) => {
+  response.json({ user: request.user });
+});
+
+app.get("/api/agents", requireAuth, async (request, response, next) => {
+  try {
+    response.json({ agents: await listAgents(request.user.companyId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/conversations/:conversationId", requireAuth, async (request, response, next) => {
+  try {
+    const conversation = await getConversation(
+      request.user.companyId,
+      request.params.conversationId,
+    );
+    if (!conversation) {
+      return response.status(404).json({ error: "Conversation not found" });
+    }
+    return response.json({ conversation });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post("/api/realtime/client-secret", requireAuth, async (request, response, next) => {
+  try {
+    const agent = await getAgent(
+      request.user.companyId,
+      request.body?.agentId ?? "customer-support",
+    );
+    if (!agent) {
+      return response.status(400).json({ error: "Unknown agent" });
+    }
+    const conversation = await createConversation({
+      companyId: request.user.companyId,
+      agentId: agent.id,
+    });
     const openAiResponse = await fetch(
       "https://api.openai.com/v1/realtime/client_secrets",
       {
@@ -35,6 +144,11 @@ app.post("/api/realtime/client-secret", async (request, response, next) => {
             type: "realtime",
             model: env.realtimeModel,
             audio: {
+              input: {
+                transcription: {
+                  model: env.transcriptionModel,
+                },
+              },
               output: {
                 voice: env.realtimeVoice,
               },
@@ -53,19 +167,77 @@ app.post("/api/realtime/client-secret", async (request, response, next) => {
       throw error;
     }
 
-    response.json({ clientSecret: payload.value, agent: getAllAgents().find(({ id }) => id === agent.id) });
+    response.json({
+      clientSecret: payload.value,
+      conversationId: conversation.id,
+      callId: conversation.callId,
+      agent: { id: agent.agentId, name: agent.name },
+    });
   } catch (error) {
     next(error);
   }
 });
 
+app.post("/api/calls/:callId/end", requireAuth, async (request, response, next) => {
+  try {
+    const call = await endCall(
+      request.user.companyId,
+      request.params.callId,
+      request.body?.reason ?? "client_stopped",
+    );
+    if (!call) return response.status(404).json({ error: "Active call not found" });
+    return response.json({ call });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post(
+  "/api/conversations/:conversationId/messages",
+  requireAuth,
+  async (request, response, next) => {
+    try {
+      const { speaker, transcript, providerItemId } = request.body ?? {};
+      if (
+        !["user", "assistant"].includes(speaker) ||
+        typeof transcript !== "string" ||
+        !transcript.trim()
+      ) {
+        return response.status(400).json({ error: "Invalid transcript message" });
+      }
+
+      const conversation = await appendMessage(
+        request.user.companyId,
+        request.params.conversationId,
+        {
+          speaker,
+          transcript: transcript.trim(),
+          providerItemId:
+            typeof providerItemId === "string" ? providerItemId : undefined,
+        },
+      );
+      return response.status(201).json({ conversation });
+    } catch (error) {
+      return next(error);
+    }
+  },
+);
+
 app.use((error, _request, response, _next) => {
   console.error(error);
+  const clientError = error.statusCode >= 400 && error.statusCode < 500;
   response.status(error.statusCode ?? 500).json({
-    error: "Unable to create a realtime session",
+    error: clientError ? error.message : "Internal server error",
   });
 });
 
-app.listen(env.port, () => {
-  console.log(`Voice prototype listening at http://localhost:${env.port}`);
-});
+try {
+  await initializeDatabase();
+  app.listen(env.port, () => {
+    console.log(`Voice prototype listening at http://localhost:${env.port}`);
+  });
+} catch (error) {
+  console.error("Unable to initialize the database.", error);
+  await pool.end();
+  process.exitCode = 1;
+}

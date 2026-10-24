@@ -14,6 +14,14 @@
   <body>
     <h1>AI voice prototype</h1>
     <p>Start a browser session and speak through your microphone.</p>
+    <form id="auth">
+      <input id="company-name" placeholder="Company name (registration only)" />
+      <input id="email" type="email" placeholder="Email" required />
+      <input id="password" type="password" placeholder="Password (12+ characters)" required />
+      <button type="submit">Register</button>
+      <button id="login" type="button">Log in</button>
+    </form>
+    <button id="logout" type="button">Log out</button>
     <label>
       Agent
       <select id="agent" disabled>
