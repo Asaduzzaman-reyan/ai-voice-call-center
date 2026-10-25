@@ -1,4 +1,6 @@
 import express from "express";
+import http from "node:http";
+import { WebSocketServer } from "ws";
 import { deleteSession, getUserBySession, loginUser, registerUser } from "./auth/auth.service.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,16 +14,39 @@ import {
   listAgents,
 } from "./conversations/conversation.store.js";
 import { initializeDatabase, pool } from "./db/database.js";
+import {
+  bridgeTwilioMedia,
+  createTelephonyCall,
+  isValidTwilioRequest,
+  twimlForCall,
+} from "./telephony/twilio.js";
 
 const app = express();
 const currentFile = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(currentFile);
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(currentDirectory, "..", "public")));
 
 app.get("/api/health", (_request, response) => {
   response.json({ ok: true });
+});
+
+app.post("/twilio/voice", async (request, response, next) => {
+  try {
+    if (!isValidTwilioRequest(request)) {
+      return response.status(403).type("text/plain").send("Invalid Twilio signature");
+    }
+    const call = await createTelephonyCall(request.body.CallSid);
+    response.type("text/xml").send(twimlForCall({
+      callId: call.callId,
+      conversationId: call.id,
+      agentId: call.agent.id,
+    }));
+  } catch (error) {
+    next(error);
+  }
 });
 
 function sessionId(request) {
@@ -252,7 +277,35 @@ app.use((error, _request, response, _next) => {
 
 try {
   await initializeDatabase();
-  app.listen(env.port, () => {
+  const server = http.createServer(app);
+  const webSocketServer = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (request, socket, head) => {
+    if (request.url !== "/twilio/media") {
+      socket.destroy();
+      return;
+    }
+    webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
+      webSocketServer.emit("connection", webSocket, request);
+    });
+  });
+  webSocketServer.on("connection", (webSocket) => {
+    let metadata;
+    webSocket.on("message", async (raw) => {
+      const event = JSON.parse(raw.toString());
+      if (event.event === "start") {
+        metadata = {
+          ...event.start.customParameters,
+          streamSid: event.start.streamSid,
+          companyId: env.telephonyCompanyId,
+        };
+        const agent = await getAgent(metadata.companyId, metadata.agentId);
+        if (!agent) return webSocket.close(1008, "Unknown agent");
+        metadata.instructions = agent.instructions;
+        await bridgeTwilioMedia(webSocket, metadata);
+      }
+    });
+  });
+  server.listen(env.port, () => {
     console.log(`Voice prototype listening at http://localhost:${env.port}`);
   });
 } catch (error) {

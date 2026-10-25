@@ -21,7 +21,7 @@ export async function getAgent(companyId, agentId) {
   return result.rows[0] ?? null;
 }
 
-export async function createConversation({ companyId, agentId }) {
+export async function createConversation({ companyId, agentId, providerCallId = null }) {
   const client = await pool.connect();
   const conversationId = crypto.randomUUID();
   const callId = crypto.randomUUID();
@@ -34,9 +34,9 @@ export async function createConversation({ companyId, agentId }) {
       [conversationId, companyId, agentId],
     );
     await client.query(
-      `INSERT INTO calls (id, company_id, conversation_id)
-       VALUES ($1, $2, $3)`,
-      [callId, companyId, conversationId],
+      `INSERT INTO calls (id, company_id, conversation_id, provider_call_id)
+       VALUES ($1, $2, $3, $4)`,
+      [callId, companyId, conversationId, providerCallId],
     );
     await client.query("COMMIT");
     return { ...result.rows[0], callId, messages: [] };

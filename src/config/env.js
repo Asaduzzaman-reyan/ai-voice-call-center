@@ -19,6 +19,10 @@ export const env = {
   summaryModel:
     process.env.OPENAI_SUMMARY_MODEL?.trim() ?? "gpt-4o-mini",
   cookieSecure: process.env.NODE_ENV === "production",
+  publicBaseUrl: required("PUBLIC_BASE_URL").replace(/\/$/, ""),
+  twilioAuthToken: required("TWILIO_AUTH_TOKEN"),
+  telephonyCompanyId: required("TELEPHONY_COMPANY_ID"),
+  telephonyAgentId: required("TELEPHONY_AGENT_ID"),
 };
 
 if (!Number.isInteger(env.port) || env.port < 1 || env.port > 65535) {

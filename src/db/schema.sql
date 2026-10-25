@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS calls (
   id UUID PRIMARY KEY,
   company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   conversation_id UUID NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE,
+  provider_call_id TEXT UNIQUE,
   status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'completed', 'failed')),
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -55,6 +56,13 @@ CREATE TABLE IF NOT EXISTS calls (
   duration_seconds INTEGER,
   termination_reason TEXT
 );
+
+ALTER TABLE calls
+  ADD COLUMN IF NOT EXISTS provider_call_id TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS calls_provider_call_id_idx
+  ON calls (provider_call_id)
+  WHERE provider_call_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS summary_jobs (
   id UUID PRIMARY KEY,
