@@ -70,6 +70,19 @@ CREATE TABLE IF NOT EXISTS summary_jobs (
   completed_at TIMESTAMPTZ
 );
 
+CREATE TABLE IF NOT EXISTS call_summaries (
+  id UUID PRIMARY KEY,
+  company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  call_id UUID NOT NULL UNIQUE REFERENCES calls(id) ON DELETE CASCADE,
+  summary TEXT NOT NULL,
+  customer_intent TEXT,
+  resolution_status TEXT,
+  follow_up_required BOOLEAN NOT NULL DEFAULT FALSE,
+  follow_up_notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS conversation_messages (
   id UUID PRIMARY KEY,
   conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -91,6 +104,9 @@ CREATE INDEX IF NOT EXISTS calls_company_started_idx
 
 CREATE INDEX IF NOT EXISTS summary_jobs_ready_idx
   ON summary_jobs (status, available_at);
+
+CREATE INDEX IF NOT EXISTS call_summaries_company_created_idx
+  ON call_summaries (company_id, created_at DESC);
 
 INSERT INTO companies (id, name)
 VALUES ('00000000-0000-0000-0000-000000000001', 'Development Company')

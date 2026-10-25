@@ -16,6 +16,8 @@ export const env = {
   realtimeVoice: required("OPENAI_REALTIME_VOICE"),
   transcriptionModel:
     process.env.OPENAI_TRANSCRIPTION_MODEL?.trim() ?? "gpt-4o-mini-transcribe",
+  summaryModel:
+    process.env.OPENAI_SUMMARY_MODEL?.trim() ?? "gpt-4o-mini",
   cookieSecure: process.env.NODE_ENV === "production",
 };
 

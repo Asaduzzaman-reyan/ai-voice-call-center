@@ -55,10 +55,15 @@ export async function getConversation(companyId, conversationId) {
             ca.id AS "callId", ca.status AS "callStatus",
             ca.started_at AS "startedAt", ca.ended_at AS "endedAt",
             ca.duration_seconds AS "durationSeconds",
-            ca.termination_reason AS "terminationReason"
+            ca.termination_reason AS "terminationReason",
+            cs.summary, cs.customer_intent AS "customerIntent",
+            cs.resolution_status AS "resolutionStatus",
+            cs.follow_up_required AS "followUpRequired",
+            cs.follow_up_notes AS "followUpNotes"
      FROM conversations c
      JOIN agents a ON a.id = c.agent_id
      JOIN calls ca ON ca.conversation_id = c.id
+     LEFT JOIN call_summaries cs ON cs.call_id = ca.id
      WHERE c.id = $1 AND c.company_id = $2`,
     [conversationId, companyId],
   );

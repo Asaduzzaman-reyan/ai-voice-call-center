@@ -118,6 +118,25 @@ app.get("/api/conversations/:conversationId", requireAuth, async (request, respo
   }
 });
 
+app.get("/api/calls/:callId/summary", requireAuth, async (request, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT cs.summary, cs.customer_intent AS "customerIntent",
+              cs.resolution_status AS "resolutionStatus",
+              cs.follow_up_required AS "followUpRequired",
+              cs.follow_up_notes AS "followUpNotes",
+              cs.created_at AS "createdAt", cs.updated_at AS "updatedAt"
+       FROM call_summaries cs
+       WHERE cs.call_id = $1 AND cs.company_id = $2`,
+      [request.params.callId, request.user.companyId],
+    );
+    if (!result.rows[0]) return response.status(404).json({ error: "Summary not found" });
+    return response.json({ summary: result.rows[0] });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post("/api/realtime/client-secret", requireAuth, async (request, response, next) => {
   try {
     const agent = await getAgent(
