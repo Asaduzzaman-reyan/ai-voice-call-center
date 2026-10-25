@@ -12,6 +12,8 @@ import {
   getConversation,
   getAgent,
   listAgents,
+  listCalls,
+  updateAgent,
 } from "./conversations/conversation.store.js";
 import { initializeDatabase, pool } from "./db/database.js";
 import {
@@ -125,6 +127,36 @@ app.get("/api/agents", requireAuth, async (request, response, next) => {
     response.json({ agents: await listAgents(request.user.companyId) });
   } catch (error) {
     next(error);
+  }
+});
+
+app.patch("/api/agents/:agentId", requireAuth, async (request, response, next) => {
+  try {
+    const { name, instructions, enabled } = request.body ?? {};
+    if (
+      typeof name !== "string" || name.trim().length < 2 ||
+      typeof instructions !== "string" || instructions.trim().length < 10 ||
+      typeof enabled !== "boolean"
+    ) {
+      return response.status(400).json({ error: "Invalid agent configuration" });
+    }
+    const agent = await updateAgent(request.user.companyId, request.params.agentId, {
+      name: name.trim(),
+      instructions: instructions.trim(),
+      enabled,
+    });
+    if (!agent) return response.status(404).json({ error: "Agent not found" });
+    return response.json({ agent });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get("/api/calls", requireAuth, async (request, response, next) => {
+  try {
+    return response.json({ calls: await listCalls(request.user.companyId) });
+  } catch (error) {
+    return next(error);
   }
 });
 

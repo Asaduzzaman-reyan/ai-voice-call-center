@@ -9,6 +9,10 @@ const emailInput = document.querySelector("#email");
 const passwordInput = document.querySelector("#password");
 const loginButton = document.querySelector("#login");
 const logoutButton = document.querySelector("#logout");
+const dashboard = document.querySelector("#dashboard");
+const callsElement = document.querySelector("#calls");
+const refreshCallsButton = document.querySelector("#refresh-calls");
+const agentSettingsElement = document.querySelector("#agent-settings");
 
 let peerConnection;
 let microphoneStream;
@@ -185,6 +189,69 @@ async function loadAgents() {
     ...agents.map((agent) => new Option(agent.name, agent.id)),
   );
   agentSelect.disabled = false;
+  dashboard.hidden = false;
+  renderAgentSettings(agents);
+  await loadCalls();
+}
+
+async function loadCalls() {
+  const response = await fetch("/api/calls");
+  if (!response.ok) throw new Error("Unable to load calls.");
+  const { calls } = await response.json();
+  callsElement.replaceChildren(...calls.map((call) => {
+    const row = document.createElement("tr");
+    const summary = call.summary ?? "Pending";
+    row.innerHTML = `<td>${new Date(call.startedAt).toLocaleString()}</td>
+      <td>${escapeHtml(call.agentName)}</td>
+      <td>${escapeHtml(call.status)}</td>
+      <td>${escapeHtml(summary)}</td>
+      <td><button type="button" data-conversation="${call.conversationId}">View transcript</button></td>`;
+    row.querySelector("button").addEventListener("click", () => viewConversation(call.conversationId));
+    return row;
+  }));
+}
+
+async function viewConversation(conversationId) {
+  const response = await fetch(`/api/conversations/${conversationId}`);
+  if (!response.ok) return setStatus("Unable to load conversation.");
+  const { conversation } = await response.json();
+  transcriptElement.textContent = conversation.messages
+    .map((message) => `${message.speaker}: ${message.transcript}`)
+    .join("\n");
+  setStatus(conversation.summary ?? "Transcript loaded.");
+}
+
+function renderAgentSettings(agents) {
+  agentSettingsElement.replaceChildren(...agents.map((agent) => {
+    const form = document.createElement("form");
+    form.innerHTML = `<h3>${escapeHtml(agent.name)}</h3>
+      <input name="name" value="${escapeHtml(agent.name)}" required>
+      <textarea name="instructions" required>${escapeHtml(agent.instructions ?? "")}</textarea>
+      <label><input name="enabled" type="checkbox" ${agent.enabled !== false ? "checked" : ""}> Enabled</label>
+      <button>Save</button>`;
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const body = {
+        name: form.elements.name.value,
+        instructions: form.elements.instructions.value,
+        enabled: form.elements.enabled.checked,
+      };
+      const response = await fetch(`/api/agents/${agent.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setStatus(response.ok ? "Agent saved." : "Unable to save agent.");
+      if (response.ok) await loadAgents();
+    });
+    return form;
+  }));
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[character]);
 }
 
 authForm.addEventListener("submit", async (event) => {
@@ -212,7 +279,12 @@ logoutButton.addEventListener("click", async () => {
   await fetch("/api/auth/logout", { method: "POST" });
   agentSelect.replaceChildren(new Option("Log in to load agents.", ""));
   agentSelect.disabled = true;
+  dashboard.hidden = true;
   setStatus("Logged out.");
+});
+
+refreshCallsButton.addEventListener("click", () => {
+  loadCalls().catch((error) => setStatus(error.message));
 });
 
 loadAgents().catch((error) => {

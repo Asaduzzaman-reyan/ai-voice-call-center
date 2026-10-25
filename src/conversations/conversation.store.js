@@ -2,13 +2,44 @@ import { pool } from "../db/database.js";
 
 export async function listAgents(companyId) {
   const result = await pool.query(
-    `SELECT slug AS id, slug AS "agentId", name
+    `SELECT slug AS id, slug AS "agentId", name, instructions, enabled
      FROM agents
      WHERE company_id = $1 AND enabled = TRUE
      ORDER BY name`,
     [companyId],
   );
   return result.rows;
+}
+
+export async function listCalls(companyId) {
+  const result = await pool.query(
+    `SELECT ca.id AS "callId", ca.status, ca.started_at AS "startedAt",
+            ca.ended_at AS "endedAt", ca.duration_seconds AS "durationSeconds",
+            ca.termination_reason AS "terminationReason",
+            c.id AS "conversationId", a.name AS "agentName",
+            cs.summary, cs.resolution_status AS "resolutionStatus",
+            cs.follow_up_required AS "followUpRequired"
+     FROM calls ca
+     JOIN conversations c ON c.id = ca.conversation_id
+     JOIN agents a ON a.id = c.agent_id
+     LEFT JOIN call_summaries cs ON cs.call_id = ca.id
+     WHERE ca.company_id = $1
+     ORDER BY ca.started_at DESC
+     LIMIT 100`,
+    [companyId],
+  );
+  return result.rows;
+}
+
+export async function updateAgent(companyId, agentId, updates) {
+  const result = await pool.query(
+    `UPDATE agents
+     SET name = $3, instructions = $4, enabled = $5
+     WHERE company_id = $1 AND (id::text = $2 OR slug = $2)
+     RETURNING id, slug AS "agentId", name, instructions, enabled`,
+    [companyId, agentId, updates.name, updates.instructions, updates.enabled],
+  );
+  return result.rows[0] ?? null;
 }
 
 export async function getAgent(companyId, agentId) {
