@@ -15,7 +15,7 @@ import {
   listCalls,
   updateAgent,
 } from "./conversations/conversation.store.js";
-import { initializeDatabase, pool } from "./db/database.js";
+import { initializeDatabase, markStaleCalls, pool } from "./db/database.js";
 import {
   bridgeTwilioMedia,
   createTelephonyCall,
@@ -33,6 +33,16 @@ app.use(express.static(path.join(currentDirectory, "..", "public")));
 
 app.get("/api/health", (_request, response) => {
   response.json({ ok: true });
+});
+
+app.get("/api/ready", async (_request, response) => {
+  try {
+    await pool.query("SELECT 1");
+    return response.json({ ok: true, database: "ready" });
+  } catch (error) {
+    console.error("Readiness check failed:", error.message);
+    return response.status(503).json({ ok: false, database: "unavailable" });
+  }
 });
 
 app.post("/twilio/voice", async (request, response, next) => {
@@ -311,6 +321,13 @@ try {
   await initializeDatabase();
   const server = http.createServer(app);
   const webSocketServer = new WebSocketServer({ noServer: true });
+  const activeSockets = new Set();
+  const staleCallTimer = setInterval(() => {
+    markStaleCalls().catch((error) => {
+      console.error("Stale-call cleanup failed:", error.message);
+    });
+  }, 5 * 60 * 1000);
+  staleCallTimer.unref();
   server.on("upgrade", (request, socket, head) => {
     if (request.url !== "/twilio/media") {
       socket.destroy();
@@ -321,25 +338,42 @@ try {
     });
   });
   webSocketServer.on("connection", (webSocket) => {
+    activeSockets.add(webSocket);
+    webSocket.once("close", () => activeSockets.delete(webSocket));
     let metadata;
     webSocket.on("message", async (raw) => {
-      const event = JSON.parse(raw.toString());
-      if (event.event === "start") {
-        metadata = {
-          ...event.start.customParameters,
-          streamSid: event.start.streamSid,
-          companyId: env.telephonyCompanyId,
-        };
-        const agent = await getAgent(metadata.companyId, metadata.agentId);
-        if (!agent) return webSocket.close(1008, "Unknown agent");
-        metadata.instructions = agent.instructions;
-        await bridgeTwilioMedia(webSocket, metadata);
+      try {
+        const event = JSON.parse(raw.toString());
+        if (event.event === "start" && !metadata) {
+          metadata = {
+            ...event.start.customParameters,
+            streamSid: event.start.streamSid,
+            companyId: env.telephonyCompanyId,
+          };
+          const agent = await getAgent(metadata.companyId, metadata.agentId);
+          if (!agent) return webSocket.close(1008, "Unknown agent");
+          metadata.instructions = agent.instructions;
+          await bridgeTwilioMedia(webSocket, metadata);
+        }
+      } catch (error) {
+        console.error("Telephony stream error:", error.message);
+        webSocket.close(1011, "Stream processing failed");
       }
     });
   });
   server.listen(env.port, () => {
     console.log(`Voice prototype listening at http://localhost:${env.port}`);
   });
+  const shutdown = async (signal) => {
+    console.log(`Received ${signal}; shutting down gracefully.`);
+    clearInterval(staleCallTimer);
+    for (const socket of activeSockets) socket.close(1001, "Server shutting down");
+    webSocketServer.close();
+    await new Promise((resolve) => server.close(resolve));
+    await pool.end();
+  };
+  process.once("SIGINT", () => shutdown("SIGINT").then(() => process.exit(0)));
+  process.once("SIGTERM", () => shutdown("SIGTERM").then(() => process.exit(0)));
 } catch (error) {
   console.error("Unable to initialize the database.", error);
   await pool.end();

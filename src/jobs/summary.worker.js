@@ -191,9 +191,11 @@ if (process.argv[1]?.endsWith("summary.worker.js")) {
   const timer = setInterval(() => {
     run().catch((error) => console.error("Summary worker error:", error));
   }, 5000);
-  process.on("SIGTERM", async () => {
+  const shutdown = async () => {
     clearInterval(timer);
     await pool.end();
     process.exit(0);
-  });
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 }
